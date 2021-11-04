@@ -1,0 +1,115 @@
+login : pw
+	bonus3 : 71d449df0f960b36e0055eb58c14d0f5d0ddc0b35328d657f91cf0df15910587
+
+disas main
+	=> stack allocated = 0xa0 = 160
+	=> fopen called with
+		=> esp+0x4 = 0x80486f0
+			=> x/s 0x80486f0
+				=> "r"
+		=> esp = 0x80486f2
+			=> x/s 0x80486f2
+				=> "/home/user/end/.pass"
+	=> ret value stored in esp+0x9c
+	=> rep stos DWORD PTR es:[edi],eax
+		=> repetition 
+		=> counter = 0x21 = 33
+		=> eax = 0
+		=> edi = esp+0x18 (uninitialized so far)
+			=> Stores 0 value into 33 bytes starting a esp+0x18
+			=> This is just to initialize a stack variable to 0
+	=> comparison between esp+0x9c and 0
+		=> if equal
+			=> store 0xffffffff (-1) into eax
+			=> jmp to main+289 which is the return of main
+				=> esp+0x9c is fopen ret value
+				=> if this value is 0 it means the fopen call failed
+	=> comparison between ebp+0x8 and 2
+		=> if not equal
+			=> store 0xffffffff (-1) into eax
+			=> jmp to main+289 which is the return of main
+				=> ebp+0x8 is ac
+					=> ac must be 2 not to return
+	=> call fread with
+		=> esp+0xc = esp+0x9c (ret stream from fopen)
+		=> esp+0x8 = 0x42 = 66
+		=> esp+0x4 = 0x1
+		=> esp = esp+0x18 (initialized 0 stack var)
+	=> call atoi with
+		=> esp <= [eax] <= add 0x4 <= [ebp+0xc]
+			=> [ebp+0xc] = av
+			=> add 0x4 = av + 1
+			=> [eax] = av[1]
+	=> mov    BYTE PTR [esp+eax*1+0x18],0x0
+		=> stores 0 value into
+			=> eax = atoi ret value
+			=> esp+0x18 = fread first param (storing pointer)
+				=> put 0 into read buf from fread at atoi ret value
+	=> call fread with
+		=> esp+0xc = [esp+0x9c] = fopen ret value
+		=> esp+0x8 = 0x41 = 65
+		=> esp+0x4 = 0x1
+		=> esp <= eax+0x42 <= esp+0x18
+			=> esp+0x18 = fread first param (storing pointer)
+			=> +0x18 = new storing var
+	=> call fclose with ret value from fopen
+	=> call strcmp with
+		=> esp+0x4 <= [eax] <= add 0x4 <= [ebp+0xc]
+			=> av[1] (like before)
+		=> esp = esp+0x18 = fread first param (storing pointer)
+	=> test eax eax <= and operation to set flags
+		=> if eax is 0 => it will set zeroflag to 1
+		=> else => zeroflag set to 0
+	=> jne instruction jump if zeroflag is not set to 1
+	=> if jump => jmp to main+269
+		=> call puts with
+			=> esp <= eax+0x42 <= esp+0x18 (new var from last fread)
+	=> call execl with
+		=> esp+0x8 = 0
+		=> esp+0x4 = 0x8048707
+			=> "sh"
+		=> esp = 0x804870a
+			=> "/bin/sh"
+	=> return 0
+
+The first thing to notice not to return early is:
+	=> ac must be equal to 2
+	=> file must be opened
+	=> There are no known vulnerable function
+
+file must be opened so we cant be in virtual env from gdb
+
+fread is called twice on "/home/user/end/.pass"
+	=> echo [pw] | wc -c
+		=> 65
+		=> password is 65 bytes long
+
+first fread call reads 66 bytes
+	=> entire password
+second fread call has nothing left to read
+	=> giving something wrong should display nothing
+	=> ./bonus3 abc
+		=> empty line
+
+Summary:
+	=> if strcmp of first fread buf and av[1] gives 0 we open a shell
+	=> av[1] is left unmodified
+	=> buf from fread is modified
+		=> buf[atoi(av[1])] = 0
+
+fread buf may not start with a digit
+if av[1] doesnt start with a digit, it returns 0 from atoi
+	=> buf[0] will be 0
+	=> strcmp will fail
+
+We need buf[0] = 0, so atoi(av[1]) = 0 and av[1] = 0
+	=> strcmp will then work
+
+I guess you already know what we have to do
+	=> ./bonus3 ""
+		=> shell started
+
+whoami
+	=> end
+cat /home/user/end/.pass
+	=> 3321b6f81659f9a71c76616f606e4b50189cecfea611393d5d649f75e157353c

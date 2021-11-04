@@ -1,0 +1,45 @@
+login : pw
+	level0 : level0
+
+find / -type d -perm -007 2> /dev/null
+	/tmp
+		=> Thank you!
+
+ls -l
+	-rwsr-x---+ 1 level1 users 747441 Mar  6  2016 level0
+		=> ACL (Access Control List)
+
+getfacl level0
+	user:level0:r-x
+		=> Can be exported
+
+scp -P 4242 level0@192.168.1.20:~/level0 .
+
+bash ghidra.sh
+	=> ghidra docker mounted on rainfall directory to avoid launching the script for each level
+		=> Usual setup (New project, import file, analyze)
+
+show disassembly-flavor
+	att
+
+set disassembly-flavor intel
+	=> I prefer
+
+layout asm
+
+layout regs
+
+Program:
+	Compares atoi(argv[1]) with 423
+	If equal, duplicate "/bin/sh"
+		=> Get effective [uid, gid]
+		=> Set real, effective, saved [uid, gid] to level1 (SUID, GUID set on program)
+		=> Execv of "/bin/sh"
+	Else
+		=> Write "No !\n" to stderr
+
+./level0 423
+whoami
+	=> level1
+cat /home/user/level1/.pass
+	=> 1fe8a524fa4bec01ca4ea2a869af2a02260d4a7d5fe7e7c24d8617e6dca12d3a
